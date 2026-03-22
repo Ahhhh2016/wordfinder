@@ -1,18 +1,16 @@
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = join(__filename, "..");
+const __dirname = dirname(__filename);
+const ENV_PATH = join(__dirname, ".env");
+const SAFE_FALLBACK_MODEL = "openai/gpt-4.1-mini";
 
-loadEnvFile(join(__dirname, ".env"));
+loadEnvFile(ENV_PATH);
 
 const PORT = Number(process.env.PORT || 3000);
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const DEFAULT_MODEL = process.env.GITHUB_MODEL || "openai/gpt-5-mini";
-const GITHUB_MODELS_ENDPOINT =
-  process.env.GITHUB_MODELS_ENDPOINT || "https://models.github.ai/inference/chat/completions";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -41,17 +39,20 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && req.url === "/api/health") {
+    const config = getConfig();
     sendJson(res, 200, {
       ok: true,
-      model: DEFAULT_MODEL,
-      hasToken: Boolean(GITHUB_TOKEN),
+      model: config.defaultModel,
+      hasToken: Boolean(config.githubToken),
     });
     return;
   }
 
   if (req.method === "POST" && req.url === "/api/chat") {
     try {
-      if (!GITHUB_TOKEN) {
+      const config = getConfig();
+
+      if (!config.githubToken) {
         sendJson(res, 500, {
           error: "Missing GITHUB_TOKEN. Add it to your environment or .env file.",
         });
@@ -69,8 +70,9 @@ const server = createServer(async (req, res) => {
         return;
       }
 
+      const preferredModel = body.model || config.defaultModel;
       const payload = {
-        model: body.model || DEFAULT_MODEL,
+        model: preferredModel,
         messages,
       };
 
@@ -82,29 +84,39 @@ const server = createServer(async (req, res) => {
         payload.max_tokens = body.max_tokens;
       }
 
-      const response = await fetch(GITHUB_MODELS_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${GITHUB_TOKEN}`,
-        },
-        body: JSON.stringify(payload),
-      });
+      let result = await requestChatCompletion(config, payload);
 
-      const data = await response.json().catch(() => null);
+      if (
+        !result.response.ok &&
+        result.data?.error?.code === "unavailable_model" &&
+        preferredModel !== SAFE_FALLBACK_MODEL
+      ) {
+        result = await requestChatCompletion(config, {
+          ...payload,
+          model: SAFE_FALLBACK_MODEL,
+        });
+      }
 
-      if (!response.ok) {
-        sendJson(res, response.status, {
-          error: data?.error?.message || data?.message || "GitHub Models request failed.",
-          details: data,
+      if (!result.response.ok) {
+        const errorMessage =
+          result.data?.error?.message ||
+          result.data?.message ||
+          result.rawText ||
+          `GitHub Models request failed with status ${result.response.status}.`;
+
+        sendJson(res, result.response.status, {
+          error: errorMessage,
+          status: result.response.status,
+          retryAfter: result.retryAfter,
+          details: result.data,
         });
         return;
       }
 
       sendJson(res, 200, {
-        model: payload.model,
-        content: data?.choices?.[0]?.message?.content ?? "",
-        raw: data,
+        model: result.data?.model || payload.model,
+        content: result.data?.choices?.[0]?.message?.content ?? "",
+        raw: result.data,
       });
     } catch (error) {
       sendJson(res, 500, {
@@ -205,6 +217,48 @@ function loadEnvFile(envPath) {
     if (key && process.env[key] === undefined) {
       process.env[key] = value;
     }
+  }
+}
+
+function getConfig() {
+  loadEnvFile(ENV_PATH);
+
+  return {
+    githubToken: process.env.GITHUB_TOKEN,
+    defaultModel: process.env.GITHUB_MODEL || SAFE_FALLBACK_MODEL,
+    endpoint:
+      process.env.GITHUB_MODELS_ENDPOINT || "https://models.github.ai/inference/chat/completions",
+  };
+}
+
+async function requestChatCompletion(config, payload) {
+  const response = await fetch(config.endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.githubToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const contentType = response.headers.get("content-type") || "";
+  const retryAfter = response.headers.get("retry-after");
+  const rawText = await response.text();
+  const data = contentType.includes("application/json") ? safeJsonParse(rawText) : null;
+
+  return {
+    response,
+    retryAfter,
+    rawText,
+    data,
+  };
+}
+
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 }
 

@@ -20,10 +20,8 @@
     <script type="text/babel">
       const { useState, useEffect } = React;
 
-      const API_BASE =
-        window.location.port === "3000" ? window.location.origin : "http://localhost:3000";
-      const API_URL = `${API_BASE}/api/chat`;
-      const MODEL_NAME = "openai/gpt-5-mini";
+      const API_URL = `${window.location.origin}/api/chat`;
+      const MODEL_NAME = "openai/gpt-4.1-mini";
 
       const SolidIcon = {
         Dictionary: ({ className = "w-5 h-5" }) => (
@@ -90,13 +88,28 @@
             const data = await response.json().catch(() => ({}));
 
             if (!response.ok) {
-              throw new Error(data.error || `HTTP 错误: ${response.status}`);
+              const error = new Error(data.error || `HTTP 错误: ${response.status}`);
+              error.status = response.status;
+              error.retryAfter = data.retryAfter;
+              throw error;
             }
 
             return data;
           } catch (error) {
+            const status = error?.status;
+            const shouldRetry =
+              status === undefined || status === 408 || status === 425 || status === 429 || status >= 500;
+
             if (i === retries - 1) {
               throw error;
+            }
+
+            if (!shouldRetry) {
+              throw error;
+            }
+
+            if (status === 429) {
+              throw new Error("请求过于频繁，当前已被 GitHub Models 限流，请稍后再试。");
             }
 
             await new Promise((resolve) => setTimeout(resolve, delays[i]));
@@ -212,7 +225,7 @@
             setResults(parsedResults);
           } catch (err) {
             console.error(err);
-            setError("搜索过程中出现问题，请稍后重试。如果多次失败，可能是模型限流或返回格式不稳定。");
+            setError(err?.message || "搜索过程中出现问题，请稍后重试。");
           } finally {
             setIsLoading(false);
           }
@@ -229,192 +242,237 @@
         };
 
         return (
-          <div className="min-h-screen bg-[#F4EDE4] text-[#3A3431] font-sans p-4 md:p-8 selection:bg-[#CF6656] selection:text-white">
-            <div className="max-w-2xl mx-auto">
-              <header className="flex items-center justify-between pb-5 mb-8 border-b border-[#E6DFD5]">
+          <div className="min-h-screen bg-[#F4EDE4] text-[#3A3431] font-sans selection:bg-[#CF6656] selection:text-white flex flex-col">
+            <header className="w-full border-b border-[#E6DFD5]">
+              <div className="max-w-7xl mx-auto px-4 md:px-8 py-5 flex items-center justify-between gap-4">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 bg-gradient-to-tr from-[#CF6656] to-[#DCA55A] text-white flex items-center justify-center rounded-[12px] shadow-[0_8px_16px_-6px_rgba(207,102,86,0.4)]">
                     <SolidIcon.Dictionary className="w-5 h-5" />
                   </div>
-                  <h1 className="text-xl font-extrabold tracking-tight text-[#3A3431]">单词唤醒</h1>
+                  <div>
+                    <h1 className="text-xl md:text-2xl font-extrabold tracking-tight text-[#3A3431]">
+                      单词唤醒
+                    </h1>
+                    <p className="text-sm text-[#8E867E] mt-1 hidden md:block">
+                      帮你从模糊线索里找回那个卡在嘴边的单词
+                    </p>
+                  </div>
                 </div>
-                <span className="text-xs font-semibold text-[#8E867E] tracking-wider uppercase">
+                <span className="text-xs font-semibold text-[#8E867E] tracking-[0.25em] uppercase shrink-0">
                   Word Finder
                 </span>
-              </header>
+              </div>
+            </header>
 
-              <div className="bg-[#FBF9F6] border border-[#E6DFD5] p-6 md:p-8 rounded-[24px] shadow-[0_20px_40px_-15px_rgba(58,52,49,0.05)] mb-8">
-                <form onSubmit={handleSearch} className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-[#8E867E] tracking-wider uppercase pl-1 block">
-                        中文含义
-                      </label>
-                      <input
-                        type="text"
-                        value={meaning}
-                        onChange={(e) => setMeaning(e.target.value)}
-                        placeholder="例如：尴尬、犹豫"
-                        className="w-full bg-[#F4EDE4] border border-transparent px-4 py-3 rounded-[16px] focus:bg-white focus:border-[#DCA55A] focus:ring-4 focus:ring-[#DCA55A]/10 transition-all outline-none text-[#3A3431] placeholder-[#BDB4AA] text-base font-medium"
-                      />
+            <main className="flex-1 w-full">
+              <div className="max-w-7xl mx-auto px-4 md:px-8 py-6 md:py-10 grid grid-cols-1 xl:grid-cols-[380px_minmax(0,1fr)] gap-8 xl:gap-10 items-start">
+                <aside className="xl:sticky xl:top-8 space-y-6">
+                  <div className="bg-[#FBF9F6] border border-[#E6DFD5] p-6 md:p-8 rounded-[24px] shadow-[0_20px_40px_-15px_rgba(58,52,49,0.05)]">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="w-10 h-10 rounded-2xl bg-[#F4EDE4] text-[#CF6656] flex items-center justify-center">
+                        <SolidIcon.Sparkles className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-bold">输入线索</h2>
+                        <p className="text-sm text-[#8E867E]">中文含义和拼写片段至少填写一项</p>
+                      </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-[#8E867E] tracking-wider uppercase pl-1 block">
-                        拼写片段
-                      </label>
-                      <input
-                        type="text"
-                        value={spelling}
-                        onChange={(e) => setSpelling(e.target.value)}
-                        placeholder="例如：awk、h...te"
-                        className="w-full bg-[#F4EDE4] border border-transparent px-4 py-3 rounded-[16px] focus:bg-white focus:border-[#DCA55A] focus:ring-4 focus:ring-[#DCA55A]/10 transition-all outline-none text-[#3A3431] placeholder-[#BDB4AA] text-base font-medium"
-                      />
-                    </div>
+                    <form onSubmit={handleSearch} className="space-y-6">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-[#8E867E] tracking-wider uppercase pl-1 block">
+                          中文含义
+                        </label>
+                        <input
+                          type="text"
+                          value={meaning}
+                          onChange={(e) => setMeaning(e.target.value)}
+                          placeholder="例如：尴尬、犹豫"
+                          className="w-full bg-[#F4EDE4] border border-transparent px-4 py-3 rounded-[16px] focus:bg-white focus:border-[#DCA55A] focus:ring-4 focus:ring-[#DCA55A]/10 transition-all outline-none text-[#3A3431] placeholder-[#BDB4AA] text-base font-medium"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-[#8E867E] tracking-wider uppercase pl-1 block">
+                          拼写片段
+                        </label>
+                        <input
+                          type="text"
+                          value={spelling}
+                          onChange={(e) => setSpelling(e.target.value)}
+                          placeholder="例如：awk、h...te"
+                          className="w-full bg-[#F4EDE4] border border-transparent px-4 py-3 rounded-[16px] focus:bg-white focus:border-[#DCA55A] focus:ring-4 focus:ring-[#DCA55A]/10 transition-all outline-none text-[#3A3431] placeholder-[#BDB4AA] text-base font-medium"
+                        />
+                      </div>
+
+                      {error && (
+                        <div className="flex items-center space-x-3 text-[#CF6656] bg-[#CF6656]/10 px-5 py-3 rounded-[16px] text-sm font-semibold">
+                          <SolidIcon.AlertCircle className="w-4 h-4 shrink-0" />
+                          <span>{error}</span>
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        disabled={isLoading}
+                        className="w-full py-4 bg-[#3A3431] text-[#FBF9F6] font-bold tracking-wide rounded-full hover:bg-[#282421] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 shadow-[0_12px_24px_-8px_rgba(58,52,49,0.3)] active:scale-[0.98]"
+                      >
+                        {isLoading ? (
+                          <>
+                            <SolidIcon.Loader2 className="w-5 h-5" />
+                            <span>检索记忆网络...</span>
+                          </>
+                        ) : (
+                          <>
+                            <SolidIcon.Search className="w-5 h-5" />
+                            <span>唤醒记忆</span>
+                          </>
+                        )}
+                      </button>
+                    </form>
                   </div>
 
-                  {error && (
-                    <div className="flex items-center space-x-3 text-[#CF6656] bg-[#CF6656]/10 px-5 py-3 rounded-[16px] text-sm font-semibold">
-                      <SolidIcon.AlertCircle className="w-4 h-4" />
-                      <span>{error}</span>
+                  <div className="bg-[#FBF9F6] border border-[#E6DFD5] rounded-[24px] p-6 shadow-[0_20px_40px_-15px_rgba(58,52,49,0.04)]">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 rounded-2xl bg-[#F4EDE4] text-[#DCA55A] flex items-center justify-center">
+                        <SolidIcon.BookOpen className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold">试试这些组合</h3>
+                        <p className="text-sm text-[#8E867E]">桌面端常驻在左侧，方便快速切换</p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-3">
+                      <button
+                        type="button"
+                        className="text-sm font-medium px-5 py-3 bg-white border border-[#E6DFD5] text-[#8E867E] hover:border-[#CF6656] hover:text-[#CF6656] transition-colors rounded-full shadow-sm text-left"
+                        onClick={() => {
+                          setMeaning("尴尬");
+                          setSpelling("aw...");
+                        }}
+                      >
+                        尴尬 + aw...
+                      </button>
+                      <button
+                        type="button"
+                        className="text-sm font-medium px-5 py-3 bg-white border border-[#E6DFD5] text-[#8E867E] hover:border-[#DCA55A] hover:text-[#DCA55A] transition-colors rounded-full shadow-sm text-left"
+                        onClick={() => {
+                          setMeaning("环境");
+                          setSpelling("enviroment");
+                        }}
+                      >
+                        环境 + enviroment
+                      </button>
+                      <button
+                        type="button"
+                        className="text-sm font-medium px-5 py-3 bg-white border border-[#E6DFD5] text-[#8E867E] hover:border-[#CF6656] hover:text-[#CF6656] transition-colors rounded-full shadow-sm text-left"
+                        onClick={() => {
+                          setMeaning("同时发生");
+                          setSpelling("simul");
+                        }}
+                      >
+                        同时发生 + simul
+                      </button>
+                    </div>
+                  </div>
+                </aside>
+
+                <section className="min-w-0">
+                  {results.length > 0 ? (
+                    <div className="space-y-5">
+                      <div className="flex items-center justify-between px-1 pb-2">
+                        <div>
+                          <h2 className="text-sm font-extrabold tracking-wider text-[#3A3431] uppercase">
+                            匹配结果
+                          </h2>
+                          <p className="text-sm text-[#8E867E] mt-2">
+                            根据你的语义线索和模糊拼写，筛出最可能的候选词。
+                          </p>
+                        </div>
+                        <span className="text-xs font-bold text-[#8E867E] bg-[#E6DFD5] px-2 py-1 rounded-full">
+                          {results.length}
+                        </span>
+                      </div>
+
+                      <div className="space-y-4">
+                        {results.map((item, index) => (
+                          <div
+                            key={`${item.word}-${index}`}
+                            className="group bg-[#FBF9F6] p-6 md:p-8 rounded-[24px] border border-[#E6DFD5] hover:border-[#DCA55A]/50 hover:shadow-[0_20px_40px_-15px_rgba(220,165,90,0.15)] transition-all relative flex flex-col lg:flex-row gap-6 justify-between items-start lg:items-center overflow-hidden"
+                          >
+                            <div
+                              className="absolute top-0 left-0 h-1 bg-gradient-to-r from-[#CF6656] to-[#DCA55A] opacity-80"
+                              style={{ width: `${item.confidence || 0}%` }}
+                            />
+
+                            <div className="space-y-2 flex-1 pr-0">
+                              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                                <h3 className="text-3xl font-extrabold text-[#3A3431] tracking-tight">
+                                  {item.word}
+                                </h3>
+                                <span className="text-[#8E867E] font-mono text-sm">
+                                  /{item.phonetic || "-"}/
+                                </span>
+                              </div>
+                              <p className="text-lg font-semibold text-[#CF6656] tracking-tight">
+                                {item.translation}
+                              </p>
+                              <p className="text-sm text-[#8E867E] font-medium leading-relaxed pt-2">
+                                {item.reason}
+                              </p>
+                            </div>
+
+                            <div className="w-full lg:w-auto flex flex-row lg:flex-col items-center justify-between gap-4 mt-2 lg:mt-0 pt-4 lg:pt-0 border-t border-[#E6DFD5] lg:border-t-0">
+                              <div className="flex flex-col items-start lg:items-end">
+                                <span className="text-[10px] font-bold text-[#8E867E] uppercase tracking-widest mb-0.5">
+                                  契合度
+                                </span>
+                                <span className="text-xl font-black text-[#3A3431]">
+                                  {item.confidence}%
+                                </span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(item.word)}
+                                className={`px-5 py-2.5 rounded-full transition-all font-bold text-sm flex items-center justify-center space-x-1.5 ${
+                                  copiedWord === item.word
+                                    ? "bg-[#E6DFD5] text-[#3A3431]"
+                                    : "bg-white border border-[#E6DFD5] text-[#3A3431] hover:bg-[#F4EDE4] active:scale-95"
+                                }`}
+                              >
+                                {copiedWord === item.word ? (
+                                  <>
+                                    <SolidIcon.CheckCircle2 className="w-4 h-4" />
+                                    <span>已复制</span>
+                                  </>
+                                ) : (
+                                  <span>复制</span>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-[#FBF9F6] border border-dashed border-[#E6DFD5] rounded-[24px] p-8 md:p-12 min-h-[420px] flex flex-col items-center justify-center text-center shadow-[0_20px_40px_-15px_rgba(58,52,49,0.03)]">
+                      <div className="w-14 h-14 rounded-2xl bg-[#F4EDE4] text-[#CF6656] flex items-center justify-center mb-5">
+                        <SolidIcon.Search className="w-6 h-6" />
+                      </div>
+                      <h2 className="text-2xl font-extrabold tracking-tight">等待你的线索</h2>
+                      <p className="mt-3 max-w-xl text-[#8E867E] leading-relaxed">
+                        输入中文含义、拼写片段，或者两者一起输入。桌面端会把检索结果展示在这里，方便你连续试错和对比候选词。
+                      </p>
                     </div>
                   )}
-
-                  <button
-                    type="submit"
-                    disabled={isLoading}
-                    className="w-full py-4 bg-[#3A3431] text-[#FBF9F6] font-bold tracking-wide rounded-full hover:bg-[#282421] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 shadow-[0_12px_24px_-8px_rgba(58,52,49,0.3)] active:scale-[0.98]"
-                  >
-                    {isLoading ? (
-                      <>
-                        <SolidIcon.Loader2 className="w-5 h-5" />
-                        <span>检索记忆网络...</span>
-                      </>
-                    ) : (
-                      <>
-                        <SolidIcon.Search className="w-5 h-5" />
-                        <span>唤醒记忆</span>
-                      </>
-                    )}
-                  </button>
-                </form>
+                </section>
               </div>
+            </main>
 
-              {!isLoading && results.length === 0 && !error && (
-                <div className="flex flex-col items-center mt-10 space-y-4">
-                  <p className="text-xs font-bold tracking-widest text-[#8E867E] uppercase">
-                    试试这些组合
-                  </p>
-                  <div className="flex flex-wrap justify-center gap-3">
-                    <button
-                      type="button"
-                      className="text-sm font-medium px-5 py-2.5 bg-white border border-[#E6DFD5] text-[#8E867E] hover:border-[#CF6656] hover:text-[#CF6656] transition-colors rounded-full shadow-sm"
-                      onClick={() => {
-                        setMeaning("尴尬");
-                        setSpelling("aw...");
-                      }}
-                    >
-                      尴尬 + aw...
-                    </button>
-                    <button
-                      type="button"
-                      className="text-sm font-medium px-5 py-2.5 bg-white border border-[#E6DFD5] text-[#8E867E] hover:border-[#DCA55A] hover:text-[#DCA55A] transition-colors rounded-full shadow-sm"
-                      onClick={() => {
-                        setMeaning("环境");
-                        setSpelling("enviroment");
-                      }}
-                    >
-                      环境 + enviroment
-                    </button>
-                    <button
-                      type="button"
-                      className="text-sm font-medium px-5 py-2.5 bg-white border border-[#E6DFD5] text-[#8E867E] hover:border-[#CF6656] hover:text-[#CF6656] transition-colors rounded-full shadow-sm"
-                      onClick={() => {
-                        setMeaning("同时发生");
-                        setSpelling("simul");
-                      }}
-                    >
-                      同时发生 + simul
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {results.length > 0 && (
-                <div className="space-y-5 pb-12">
-                  <div className="flex items-center justify-between px-1 pb-2">
-                    <h2 className="text-sm font-extrabold tracking-wider text-[#3A3431] uppercase">
-                      匹配结果
-                    </h2>
-                    <span className="text-xs font-bold text-[#8E867E] bg-[#E6DFD5] px-2 py-1 rounded-full">
-                      {results.length}
-                    </span>
-                  </div>
-
-                  <div className="space-y-4">
-                    {results.map((item, index) => (
-                      <div
-                        key={`${item.word}-${index}`}
-                        className="group bg-[#FBF9F6] p-6 md:p-8 rounded-[24px] border border-[#E6DFD5] hover:border-[#DCA55A]/50 hover:shadow-[0_20px_40px_-15px_rgba(220,165,90,0.15)] transition-all relative flex flex-col md:flex-row gap-6 justify-between items-start md:items-center overflow-hidden"
-                      >
-                        <div
-                          className="absolute top-0 left-0 h-1 bg-gradient-to-r from-[#CF6656] to-[#DCA55A] opacity-80"
-                          style={{ width: `${item.confidence || 0}%` }}
-                        />
-
-                        <div className="space-y-2 flex-1 pr-0">
-                          <div className="flex items-baseline space-x-3">
-                            <h3 className="text-3xl font-extrabold text-[#3A3431] tracking-tight">
-                              {item.word}
-                            </h3>
-                            <span className="text-[#8E867E] font-mono text-sm">
-                              /{item.phonetic || "-"}/
-                            </span>
-                          </div>
-                          <p className="text-lg font-semibold text-[#CF6656] tracking-tight">
-                            {item.translation}
-                          </p>
-                          <p className="text-sm text-[#8E867E] font-medium leading-relaxed pt-2">
-                            {item.reason}
-                          </p>
-                        </div>
-
-                        <div className="w-full md:w-auto flex flex-row md:flex-col items-center justify-between gap-4 mt-2 md:mt-0 pt-4 md:pt-0 border-t border-[#E6DFD5] md:border-t-0">
-                          <div className="flex flex-col items-start md:items-end">
-                            <span className="text-[10px] font-bold text-[#8E867E] uppercase tracking-widest mb-0.5">
-                              契合度
-                            </span>
-                            <span className="text-xl font-black text-[#3A3431]">
-                              {item.confidence}%
-                            </span>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => copyToClipboard(item.word)}
-                            className={`px-5 py-2.5 rounded-full transition-all font-bold text-sm flex items-center justify-center space-x-1.5 ${
-                              copiedWord === item.word
-                                ? "bg-[#E6DFD5] text-[#3A3431]"
-                                : "bg-white border border-[#E6DFD5] text-[#3A3431] hover:bg-[#F4EDE4] active:scale-95"
-                            }`}
-                          >
-                            {copiedWord === item.word ? (
-                              <>
-                                <SolidIcon.CheckCircle2 className="w-4 h-4" />
-                                <span>已复制</span>
-                              </>
-                            ) : (
-                              <span>复制</span>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <footer className="mt-12 pt-8 border-t border-[#E6DFD5] text-center space-y-3 pb-8">
+            <footer className="w-full border-t border-[#E6DFD5] mt-8">
+              <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 text-center space-y-3">
                 <p className="text-sm text-[#8E867E] font-medium tracking-wide">
                   由{" "}
                   <a
@@ -430,8 +488,8 @@
                 <p className="text-xs text-[#BDB4AA] font-medium tracking-wide">
                   使用 Github Models 免费模型，有使用限制
                 </p>
-              </footer>
-            </div>
+              </div>
+            </footer>
           </div>
         );
       }
