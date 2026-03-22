@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="wordfinderGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#CF6656" />
+      <stop offset="100%" stop-color="#DCA55A" />
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="52" height="52" rx="14" fill="url(#wordfinderGradient)" />
+  <path
+    d="M21 15c-2.761 0-5 2.239-5 5v24c0 2.761 2.239 5 5 5h22c2.761 0 5-2.239 5-5V20c0-2.761-2.239-5-5-5H21Zm20 0v17l-6.25-3.75L28.5 32V15H41Z"
+    fill="#ffffff"
+  />
+</svg>

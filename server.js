@@ -28,8 +28,13 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && req.url === "/favicon.ico") {
-    res.writeHead(204);
+    res.writeHead(302, { Location: "/favicon.svg" });
     res.end();
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/favicon.svg") {
+    sendFile(res, 200, join(__dirname, "favicon.svg"), "image/svg+xml; charset=utf-8");
     return;
   }
 
@@ -148,6 +153,16 @@ function sendJson(res, statusCode, data) {
 function sendHtml(res, statusCode, html) {
   res.writeHead(statusCode, { "Content-Type": "text/html; charset=utf-8" });
   res.end(html);
+}
+
+function sendFile(res, statusCode, filePath, contentType) {
+  if (!existsSync(filePath)) {
+    sendJson(res, 404, { error: "File not found" });
+    return;
+  }
+
+  res.writeHead(statusCode, { "Content-Type": contentType });
+  res.end(readFileSync(filePath));
 }
 
 function readRequestBody(req) {
