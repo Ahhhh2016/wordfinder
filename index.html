@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>单词唤醒</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      body {
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useState, useEffect } = React;
+
+      const API_BASE =
+        window.location.port === "3000" ? window.location.origin : "http://localhost:3000";
+      const API_URL = `${API_BASE}/api/chat`;
+      const MODEL_NAME = "openai/gpt-5-mini";
+
+      const SolidIcon = {
+        Dictionary: ({ className = "w-5 h-5" }) => (
+          <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+            <path d="M6 2C4.895 2 4 2.895 4 4V20C4 21.105 4.895 22 6 22H18C19.105 22 20 21.105 20 20V4C20 2.895 19.105 2 18 2H6ZM14 2V9L11.5 7.5L9 9V2H14Z" />
+          </svg>
+        ),
+        Sparkles: ({ className = "w-5 h-5" }) => (
+          <svg viewBox="0 0 20 20" fill="currentColor" className={className}>
+            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+          </svg>
+        ),
+        Search: ({ className = "w-5 h-5" }) => (
+          <svg viewBox="0 0 20 20" fill="currentColor" className={className}>
+            <path
+              fillRule="evenodd"
+              d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
+              clipRule="evenodd"
+            />
+          </svg>
+        ),
+        BookOpen: ({ className = "w-5 h-5" }) => (
+          <svg viewBox="0 0 20 20" fill="currentColor" className={className}>
+            <path d="M9 2H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h5V2zm2 0v15h5a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2h-5z" />
+          </svg>
+        ),
+        AlertCircle: ({ className = "w-5 h-5" }) => (
+          <svg viewBox="0 0 20 20" fill="currentColor" className={className}>
+            <path
+              fillRule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zM9 7a1 1 0 112 0v3a1 1 0 11-2 0V7zm1 8a1 1 0 100-2 1 1 0 000 2z"
+              clipRule="evenodd"
+            />
+          </svg>
+        ),
+        CheckCircle2: ({ className = "w-5 h-5" }) => (
+          <svg viewBox="0 0 20 20" fill="currentColor" className={className}>
+            <path
+              fillRule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+              clipRule="evenodd"
+            />
+          </svg>
+        ),
+        Loader2: ({ className = "w-5 h-5" }) => (
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            className={`animate-spin ${className}`}
+          >
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ),
+      };
+
+      async function fetchWithRetry(url, options, retries = 5) {
+        const delays = [1000, 2000, 4000, 8000, 16000];
+
+        for (let i = 0; i < retries; i += 1) {
+          try {
+            const response = await fetch(url, options);
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+              throw new Error(data.error || `HTTP 错误: ${response.status}`);
+            }
+
+            return data;
+          } catch (error) {
+            if (i === retries - 1) {
+              throw error;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, delays[i]));
+          }
+        }
+
+        throw new Error("请求失败");
+      }
+
+      function extractJsonArray(text) {
+        if (!text || typeof text !== "string") {
+          throw new Error("模型没有返回文本结果");
+        }
+
+        const cleaned = text
+          .replace(/^```json\s*/i, "")
+          .replace(/^```\s*/i, "")
+          .replace(/\s*```$/i, "")
+          .trim();
+
+        const firstBracket = cleaned.indexOf("[");
+        const lastBracket = cleaned.lastIndexOf("]");
+
+        if (firstBracket === -1 || lastBracket === -1 || lastBracket <= firstBracket) {
+          throw new Error("模型返回的不是 JSON 数组");
+        }
+
+        return JSON.parse(cleaned.slice(firstBracket, lastBracket + 1));
+      }
+
+      function copyText(word) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(word);
+        }
+
+        return new Promise((resolve, reject) => {
+          const textArea = document.createElement("textarea");
+          textArea.value = word;
+          document.body.appendChild(textArea);
+          textArea.select();
+
+          try {
+            document.execCommand("copy");
+            resolve();
+          } catch (error) {
+            reject(error);
+          } finally {
+            document.body.removeChild(textArea);
+          }
+        });
+      }
+
+      function App() {
+        const [meaning, setMeaning] = useState("");
+        const [spelling, setSpelling] = useState("");
+        const [results, setResults] = useState([]);
+        const [isLoading, setIsLoading] = useState(false);
+        const [error, setError] = useState("");
+        const [copiedWord, setCopiedWord] = useState("");
+
+        useEffect(() => {
+          const script = document.createElement("script");
+          script.async = true;
+          script.src = "//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js";
+          document.body.appendChild(script);
+
+          return () => {
+            document.body.removeChild(script);
+          };
+        }, []);
+
+        const handleSearch = async (e) => {
+          e.preventDefault();
+
+          if (!meaning.trim() && !spelling.trim()) {
+            setError("请输入中文含义或拼写片段（至少一项）。");
+            return;
+          }
+
+          setIsLoading(true);
+          setError("");
+          setResults([]);
+
+          const promptText = `
+我正在努力回忆一个英文单词（话到嘴边想不起来，Tip of the tongue）。
+请根据我提供的线索，帮我找出最有可能的英文单词。
+
+中文含义/线索：${meaning.trim() || "未提供"}
+拼写记忆/片段/首尾字母：${spelling.trim() || "未提供"}
+
+要求：
+1. 深度结合中文含义和拼写片段进行推理和模糊匹配。
+2. 即使拼写片段有明显错误（如多字母、少字母、元音记错、发音相似但拼写错误），也请尽力寻找最符合含义的词。
+3. 提供 5-10 个最有可能的单词，按可能性从高到低排序。
+4. 只返回 JSON 数组，不要返回 markdown，不要加代码块，不要写额外解释。
+5. 每个对象必须包含这些字段：word、translation、phonetic、reason、confidence。
+6. confidence 必须是 0-100 的整数。
+`;
+
+          try {
+            const data = await fetchWithRetry(API_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: MODEL_NAME,
+                systemPrompt:
+                  "You are a precise English vocabulary retrieval assistant. Return valid JSON only. Do not use markdown fences. Output an array of candidate words.",
+                prompt: promptText,
+              }),
+            });
+
+            const parsedResults = extractJsonArray(data.content);
+            setResults(parsedResults);
+          } catch (err) {
+            console.error(err);
+            setError("搜索过程中出现问题，请稍后重试。如果多次失败，可能是模型限流或返回格式不稳定。");
+          } finally {
+            setIsLoading(false);
+          }
+        };
+
+        const copyToClipboard = async (word) => {
+          try {
+            await copyText(word);
+            setCopiedWord(word);
+            setTimeout(() => setCopiedWord(""), 2000);
+          } catch (err) {
+            console.error("复制失败", err);
+          }
+        };
+
+        return (
+          <div className="min-h-screen bg-[#F4EDE4] text-[#3A3431] font-sans p-4 md:p-8 selection:bg-[#CF6656] selection:text-white">
+            <div className="max-w-2xl mx-auto">
+              <header className="flex items-center justify-between pb-5 mb-8 border-b border-[#E6DFD5]">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 bg-gradient-to-tr from-[#CF6656] to-[#DCA55A] text-white flex items-center justify-center rounded-[12px] shadow-[0_8px_16px_-6px_rgba(207,102,86,0.4)]">
+                    <SolidIcon.Dictionary className="w-5 h-5" />
+                  </div>
+                  <h1 className="text-xl font-extrabold tracking-tight text-[#3A3431]">单词唤醒</h1>
+                </div>
+                <span className="text-xs font-semibold text-[#8E867E] tracking-wider uppercase">
+                  Word Finder
+                </span>
+              </header>
+
+              <div className="bg-[#FBF9F6] border border-[#E6DFD5] p-6 md:p-8 rounded-[24px] shadow-[0_20px_40px_-15px_rgba(58,52,49,0.05)] mb-8">
+                <form onSubmit={handleSearch} className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-[#8E867E] tracking-wider uppercase pl-1 block">
+                        中文含义
+                      </label>
+                      <input
+                        type="text"
+                        value={meaning}
+                        onChange={(e) => setMeaning(e.target.value)}
+                        placeholder="例如：尴尬、犹豫"
+                        className="w-full bg-[#F4EDE4] border border-transparent px-4 py-3 rounded-[16px] focus:bg-white focus:border-[#DCA55A] focus:ring-4 focus:ring-[#DCA55A]/10 transition-all outline-none text-[#3A3431] placeholder-[#BDB4AA] text-base font-medium"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-[#8E867E] tracking-wider uppercase pl-1 block">
+                        拼写片段
+                      </label>
+                      <input
+                        type="text"
+                        value={spelling}
+                        onChange={(e) => setSpelling(e.target.value)}
+                        placeholder="例如：awk、h...te"
+                        className="w-full bg-[#F4EDE4] border border-transparent px-4 py-3 rounded-[16px] focus:bg-white focus:border-[#DCA55A] focus:ring-4 focus:ring-[#DCA55A]/10 transition-all outline-none text-[#3A3431] placeholder-[#BDB4AA] text-base font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  {error && (
+                    <div className="flex items-center space-x-3 text-[#CF6656] bg-[#CF6656]/10 px-5 py-3 rounded-[16px] text-sm font-semibold">
+                      <SolidIcon.AlertCircle className="w-4 h-4" />
+                      <span>{error}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full py-4 bg-[#3A3431] text-[#FBF9F6] font-bold tracking-wide rounded-full hover:bg-[#282421] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 shadow-[0_12px_24px_-8px_rgba(58,52,49,0.3)] active:scale-[0.98]"
+                  >
+                    {isLoading ? (
+                      <>
+                        <SolidIcon.Loader2 className="w-5 h-5" />
+                        <span>检索记忆网络...</span>
+                      </>
+                    ) : (
+                      <>
+                        <SolidIcon.Search className="w-5 h-5" />
+                        <span>唤醒记忆</span>
+                      </>
+                    )}
+                  </button>
+                </form>
+              </div>
+
+              {!isLoading && results.length === 0 && !error && (
+                <div className="flex flex-col items-center mt-10 space-y-4">
+                  <p className="text-xs font-bold tracking-widest text-[#8E867E] uppercase">
+                    试试这些组合
+                  </p>
+                  <div className="flex flex-wrap justify-center gap-3">
+                    <button
+                      type="button"
+                      className="text-sm font-medium px-5 py-2.5 bg-white border border-[#E6DFD5] text-[#8E867E] hover:border-[#CF6656] hover:text-[#CF6656] transition-colors rounded-full shadow-sm"
+                      onClick={() => {
+                        setMeaning("尴尬");
+                        setSpelling("aw...");
+                      }}
+                    >
+                      尴尬 + aw...
+                    </button>
+                    <button
+                      type="button"
+                      className="text-sm font-medium px-5 py-2.5 bg-white border border-[#E6DFD5] text-[#8E867E] hover:border-[#DCA55A] hover:text-[#DCA55A] transition-colors rounded-full shadow-sm"
+                      onClick={() => {
+                        setMeaning("环境");
+                        setSpelling("enviroment");
+                      }}
+                    >
+                      环境 + enviroment
+                    </button>
+                    <button
+                      type="button"
+                      className="text-sm font-medium px-5 py-2.5 bg-white border border-[#E6DFD5] text-[#8E867E] hover:border-[#CF6656] hover:text-[#CF6656] transition-colors rounded-full shadow-sm"
+                      onClick={() => {
+                        setMeaning("同时发生");
+                        setSpelling("simul");
+                      }}
+                    >
+                      同时发生 + simul
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {results.length > 0 && (
+                <div className="space-y-5 pb-12">
+                  <div className="flex items-center justify-between px-1 pb-2">
+                    <h2 className="text-sm font-extrabold tracking-wider text-[#3A3431] uppercase">
+                      匹配结果
+                    </h2>
+                    <span className="text-xs font-bold text-[#8E867E] bg-[#E6DFD5] px-2 py-1 rounded-full">
+                      {results.length}
+                    </span>
+                  </div>
+
+                  <div className="space-y-4">
+                    {results.map((item, index) => (
+                      <div
+                        key={`${item.word}-${index}`}
+                        className="group bg-[#FBF9F6] p-6 md:p-8 rounded-[24px] border border-[#E6DFD5] hover:border-[#DCA55A]/50 hover:shadow-[0_20px_40px_-15px_rgba(220,165,90,0.15)] transition-all relative flex flex-col md:flex-row gap-6 justify-between items-start md:items-center overflow-hidden"
+                      >
+                        <div
+                          className="absolute top-0 left-0 h-1 bg-gradient-to-r from-[#CF6656] to-[#DCA55A] opacity-80"
+                          style={{ width: `${item.confidence || 0}%` }}
+                        />
+
+                        <div className="space-y-2 flex-1 pr-0">
+                          <div className="flex items-baseline space-x-3">
+                            <h3 className="text-3xl font-extrabold text-[#3A3431] tracking-tight">
+                              {item.word}
+                            </h3>
+                            <span className="text-[#8E867E] font-mono text-sm">
+                              /{item.phonetic || "-"}/
+                            </span>
+                          </div>
+                          <p className="text-lg font-semibold text-[#CF6656] tracking-tight">
+                            {item.translation}
+                          </p>
+                          <p className="text-sm text-[#8E867E] font-medium leading-relaxed pt-2">
+                            {item.reason}
+                          </p>
+                        </div>
+
+                        <div className="w-full md:w-auto flex flex-row md:flex-col items-center justify-between gap-4 mt-2 md:mt-0 pt-4 md:pt-0 border-t border-[#E6DFD5] md:border-t-0">
+                          <div className="flex flex-col items-start md:items-end">
+                            <span className="text-[10px] font-bold text-[#8E867E] uppercase tracking-widest mb-0.5">
+                              契合度
+                            </span>
+                            <span className="text-xl font-black text-[#3A3431]">
+                              {item.confidence}%
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(item.word)}
+                            className={`px-5 py-2.5 rounded-full transition-all font-bold text-sm flex items-center justify-center space-x-1.5 ${
+                              copiedWord === item.word
+                                ? "bg-[#E6DFD5] text-[#3A3431]"
+                                : "bg-white border border-[#E6DFD5] text-[#3A3431] hover:bg-[#F4EDE4] active:scale-95"
+                            }`}
+                          >
+                            {copiedWord === item.word ? (
+                              <>
+                                <SolidIcon.CheckCircle2 className="w-4 h-4" />
+                                <span>已复制</span>
+                              </>
+                            ) : (
+                              <span>复制</span>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <footer className="mt-12 pt-8 border-t border-[#E6DFD5] text-center space-y-3 pb-8">
+                <p className="text-sm text-[#8E867E] font-medium tracking-wide">
+                  由{" "}
+                  <a
+                    href="https://github.com/Ahhhh2016"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#CF6656] hover:text-[#DCA55A] transition-colors font-bold underline decoration-[#CF6656]/30 underline-offset-4"
+                  >
+                    Ahhhh2016
+                  </a>{" "}
+                  制作，希望这个小工具对你有帮助
+                </p>
+                <p className="text-xs text-[#BDB4AA] font-medium tracking-wide">
+                  使用 Github Models 免费模型，有使用限制
+                </p>
+              </footer>
+            </div>
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>
